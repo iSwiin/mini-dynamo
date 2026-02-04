@@ -20,19 +20,24 @@ Recruiter version: This project demonstrates distributed systems fundamentals (f
 
 ```mermaid
 flowchart LR
-  Client[Client] -->|PUT/GET/DELETE /kv/<key>| Coord[Coordinator node]
-  Coord --> Ring[Consistent hash ring]
-  Coord -->|POST /internal/put| R1[Replica 1]
-  Coord -->|POST /internal/put| R2[Replica 2]
-  Coord -->|sloppy quorum fallback| FB[Fallback replica]
-  FB -->|enqueue hint| HintWAL[Hint WAL]
-  HintWAL -->|handoff retry| R1
-  AE[Anti-entropy loop] -->|POST /internal/keys| R2
-  AE -->|pull newer records| Coord
-  subgraph Node storage
-    Mem[MemStore (LWW)] --> KVWAL[KV WAL]
-    Mem --> Snap[Snapshot]
-  end
-  Coord --- Mem
+  client[Client] --> coord[Coordinator]
+  coord --> ring[Consistent hash ring]
+
+  coord --> r1[Replica 1]
+  coord --> r2[Replica 2]
+
+  coord --> fb[Fallback replica (sloppy quorum)]
+  fb --> hintwal[Hint WAL (durable)]
+  hintwal --> r1[Replica 1 (handoff target)]
+
+  coord --> mem[MemStore (LWW)]
+  mem --> kvwal[KV WAL]
+  mem --> snap[Snapshot (optional)]
+
+  ae[Anti-entropy loop] --> r2
+  ae --> coord
+```
+
+
 
 
