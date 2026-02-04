@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"mini-dynamo/internal/ring"
 	"mini-dynamo/internal/store"
+	"mini-dynamo/internal/transport"
 	"mini-dynamo/internal/types"
 )
 
@@ -61,8 +63,11 @@ func main() {
 	// Build the consistent-hash ring (vnodes + sorted tokens).
 	rg := ring.New(cfg.Nodes, cfg.VNodes)
 
-	// Local in-memory store (single-node KV for now).
+	// Local in-memory store.
 	st := store.NewMem()
+
+	// HTTP client for node-to-node internal calls (timeouts matter).
+	tc := transport.NewClient(800 * time.Millisecond)
 
 	mux := http.NewServeMux()
 
@@ -70,8 +75,7 @@ func main() {
 		fmt.Fprintln(w, "ok")
 	})
 
-	// Local-only KV endpoints (Milestone 2: storage + API).
-	// Later, this route becomes the "coordinator" that talks to replicas.
+	// Local-only KV endpoints (still local for now; replication comes in Milestone 4).
 	mux.HandleFunc("/kv/", func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.URL.Path, "/kv/")
 		if key == "" {
@@ -107,6 +111,99 @@ func main() {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// Milestone 3: internal replica APIs
+
+	// /internal/put writes a record into this node's local store (LWW merge).
+	mux.HandleFunc("/internal/put", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req transport.PutRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if req.Record.Key == "" {
+			http.Error(w, "missing record.key", http.StatusBadRequest)
+			return
+		}
+
+		if cur, ok := st.Get(req.Record.Key); ok {
+			st.Put(store.Newer(cur, req.Record))
+		} else {
+			st.Put(req.Record)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(transport.PutResponse{OK: true})
+	})
+
+	// /internal/get returns the record from this node's local store.
+	mux.HandleFunc("/internal/get", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req transport.GetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Key == "" {
+			http.Error(w, "bad json or missing key", http.StatusBadRequest)
+			return
+		}
+
+		rec, ok := st.Get(req.Key)
+
+		w.Header().Set("Content-Type", "application/json")
+		if !ok {
+			_ = json.NewEncoder(w).Encode(transport.GetResponse{Found: false})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(transport.GetResponse{
+			Found:  true,
+			Record: rec,
+		})
+	})
+
+	// Debug helper: ask this node to send an internal PUT to another node.
+	// Example:
+	//   /debug/replica_put?target=http://127.0.0.1:9002&key=cat&value=meow
+	mux.HandleFunc("/debug/replica_put", func(w http.ResponseWriter, r *http.Request) {
+		target := r.URL.Query().Get("target")
+		key := r.URL.Query().Get("key")
+		value := r.URL.Query().Get("value")
+		if target == "" || key == "" {
+			http.Error(w, "missing target or key", http.StatusBadRequest)
+			return
+		}
+
+		rec := store.Record{
+			Key:      key,
+			Value:    []byte(value),
+			Ts:       time.Now().UnixNano(),
+			WriterID: self.ID,
+		}
+
+		// Self shortcut: don't HTTP-call yourself.
+		if strings.Contains(target, self.Addr) {
+			st.Put(rec)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+		defer cancel()
+
+		var resp transport.PutResponse
+		err := tc.PostJSON(ctx, target+"/internal/put", transport.PutRequest{Record: rec}, &resp)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	// Debug: ring + sample replica mapping
