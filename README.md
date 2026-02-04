@@ -18,25 +18,27 @@ Recruiter version: This project demonstrates distributed systems fundamentals (f
 
 ## Architecture diagram (simple)
 
-```mermaid
+~~~mermaid
 flowchart LR
-  client[Client] --> coord[Coordinator]
-  coord --> ring[Consistent hash ring]
+  Client --> Coordinator
+  Coordinator --> Ring
 
-  coord --> r1[Replica 1]
-  coord --> r2[Replica 2]
+  Coordinator --> Replica1
+  Coordinator --> Replica2
 
-  coord --> fb[Fallback replica (sloppy quorum)]
-  fb --> hintwal[Hint WAL (durable)]
-  hintwal --> r1[Replica 1 (handoff target)]
+  Coordinator --> Fallback
+  Fallback --> HintWAL
+  HintWAL --> Replica1
 
-  coord --> mem[MemStore (LWW)]
-  mem --> kvwal[KV WAL]
-  mem --> snap[Snapshot (optional)]
+  Coordinator --> MemStore
+  MemStore --> KVWAL
+  MemStore --> Snapshot
 
-  ae[Anti-entropy loop] --> r2
-  ae --> coord
-```
+  AntiEntropy --> Replica2
+  AntiEntropy --> Coordinator
+~~~
+
+Mermaid test passed if you can see a diagram above.
 
 
 
