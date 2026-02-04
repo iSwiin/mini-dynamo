@@ -18,26 +18,25 @@ Recruiter version: This project demonstrates distributed systems fundamentals (f
 
 ## Architecture diagram (simple)
 
-### Option A — Mermaid (renders on GitHub)
-```mermaid
 flowchart LR
-  Client -->|PUT/GET/DELETE /kv/{key}| Coord[Node (Coordinator)]
-  Coord --> Ring[Consistent Hash Ring]
+  Client[Client] -->|PUT/GET/DELETE /kv/<key>| Coord[Coordinator node]
+  Coord --> Ring[Consistent hash ring]
 
-  Coord -->|/internal/put| R1[Replica]
-  Coord -->|/internal/put| R2[Replica]
-  Coord -->|/internal/get| R1
-  Coord -->|/internal/get| R2
+  Coord -->|POST /internal/put| R1[Replica 1]
+  Coord -->|POST /internal/put| R2[Replica 2]
+  Coord -->|POST /internal/get| R1
+  Coord -->|POST /internal/get| R2
 
-  Coord -->|if preferred down| FB[Fallback Replica]
-  FB -->|store hint + record| HW[Hint WAL]
-  HW -->|background delivery| R1
+  Coord -->|sloppy quorum fallback| FB[Fallback replica]
+  FB -->|enqueue hint| HintWAL[Hint WAL]
+  HintWAL -->|handoff retry| R1
 
-  AE[Anti-Entropy Loop] -->|/internal/keys| R2
+  AE[Anti-entropy loop] -->|POST /internal/keys| R2
   AE -->|pull newer records| Coord
 
-  subgraph Each Node
-    Store[MemStore (LWW)] --> WAL[KV WAL]
-    WAL -->|replay on restart| Store
-    Store --> Snap[Snapshot (optional)]
+  subgraph Node storage
+    Mem[MemStore (LWW)] --> KVWAL[KV WAL]
+    Mem --> Snap[Snapshot]
   end
+  Coord --- Mem
+
