@@ -14,9 +14,17 @@ type GetResponse struct {
 
 // PUT
 type PutRequest struct {
-	Record store.Record `json:"record"`
+	Record  store.Record `json:"record"`
+	HintFor string       `json:"hint_for,omitempty"`
 }
 
 type PutResponse struct {
 	OK bool `json:"ok"`
+}
+
+// KEYS (anti-entropy)
+type KeysRequest struct{}
+
+type KeysResponse struct {
+	Keys map[string]store.Meta `json:"keys"`
 }
