@@ -18,25 +18,18 @@ Recruiter version: This project demonstrates distributed systems fundamentals (f
 
 ## Architecture diagram (simple)
 
-flowchart LR
-  Client[Client] -->|PUT/GET/DELETE /kv/<key>| Coord[Coordinator node]
-  Coord --> Ring[Consistent hash ring]
-
-  Coord -->|POST /internal/put| R1[Replica 1]
-  Coord -->|POST /internal/put| R2[Replica 2]
-  Coord -->|POST /internal/get| R1
-  Coord -->|POST /internal/get| R2
-
-  Coord -->|sloppy quorum fallback| FB[Fallback replica]
-  FB -->|enqueue hint| HintWAL[Hint WAL]
-  HintWAL -->|handoff retry| R1
-
-  AE[Anti-entropy loop] -->|POST /internal/keys| R2
-  AE -->|pull newer records| Coord
-
-  subgraph Node storage
-    Mem[MemStore (LWW)] --> KVWAL[KV WAL]
-    Mem --> Snap[Snapshot]
+sequenceDiagram
+  participant C as Client
+  participant A as Coordinator
+  participant B as Replica
+  participant F as Fallback
+  C->>A: PUT /kv/<key>
+  A->>B: POST /internal/put (preferred)
+  alt preferred down
+    A->>F: POST /internal/put (fallback + hint)
+    Note over F: Hint WAL queued
   end
+  A-->>C: 204 (after W acks)
+
   Coord --- Mem
 
