@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"mini-dynamo/internal/coordinator"
 	"mini-dynamo/internal/ring"
 	"mini-dynamo/internal/store"
 	"mini-dynamo/internal/transport"
@@ -35,6 +36,13 @@ func loadConfig(path string) (ClusterConfig, error) {
 	return cfg, json.Unmarshal(b, &cfg)
 }
 
+func baseURL(addr string) string {
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+	return "http://" + addr
+}
+
 func main() {
 	var (
 		id   = flag.String("id", "n1", "node id (n1/n2/n3)")
@@ -45,6 +53,20 @@ func main() {
 	cfg, err := loadConfig(*cfgp)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+
+	// Validate quorum config.
+	if len(cfg.Nodes) == 0 {
+		log.Fatalf("config has 0 nodes")
+	}
+	if cfg.VNodes <= 0 {
+		log.Fatalf("vnodes must be > 0")
+	}
+	if cfg.N <= 0 || cfg.N > len(cfg.Nodes) {
+		log.Fatalf("bad N=%d (nodes=%d)", cfg.N, len(cfg.Nodes))
+	}
+	if cfg.R <= 0 || cfg.R > cfg.N || cfg.W <= 0 || cfg.W > cfg.N {
+		log.Fatalf("bad quorum R=%d W=%d for N=%d", cfg.R, cfg.W, cfg.N)
 	}
 
 	var self types.NodeInfo
@@ -60,14 +82,18 @@ func main() {
 		log.Fatalf("node id %q not found in config", *id)
 	}
 
-	// Build the consistent-hash ring (vnodes + sorted tokens).
+	// Ring + store + transport.
 	rg := ring.New(cfg.Nodes, cfg.VNodes)
-
-	// Local in-memory store.
 	st := store.NewMem()
-
-	// HTTP client for node-to-node internal calls (timeouts matter).
 	tc := transport.NewClient(800 * time.Millisecond)
+
+	// Coordinator (quorum reads/writes + read repair).
+	coord := coordinator.New(self, rg, st, tc, coordinator.Config{
+		N:       cfg.N,
+		R:       cfg.R,
+		W:       cfg.W,
+		Timeout: 800 * time.Millisecond,
+	})
 
 	mux := http.NewServeMux()
 
@@ -75,7 +101,7 @@ func main() {
 		fmt.Fprintln(w, "ok")
 	})
 
-	// Local-only KV endpoints (still local for now; replication comes in Milestone 4).
+	// Distributed KV endpoints (Dynamo-style quorum + read-repair).
 	mux.HandleFunc("/kv/", func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.URL.Path, "/kv/")
 		if key == "" {
@@ -90,17 +116,18 @@ func main() {
 				http.Error(w, "read body failed", http.StatusBadRequest)
 				return
 			}
-			rec := store.Record{
-				Key:      key,
-				Value:    val,
-				Ts:       time.Now().UnixNano(),
-				WriterID: self.ID,
+			if err := coord.Put(r.Context(), key, val); err != nil {
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+				return
 			}
-			st.Put(rec)
 			w.WriteHeader(http.StatusNoContent)
 
 		case http.MethodGet:
-			rec, ok := st.Get(key)
+			rec, ok, err := coord.Get(r.Context(), key)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+				return
+			}
 			if !ok {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
@@ -113,7 +140,7 @@ func main() {
 		}
 	})
 
-	// Milestone 3: internal replica APIs
+	// Internal replica APIs
 
 	// /internal/put writes a record into this node's local store (LWW merge).
 	mux.HandleFunc("/internal/put", func(w http.ResponseWriter, r *http.Request) {
@@ -132,11 +159,7 @@ func main() {
 			return
 		}
 
-		if cur, ok := st.Get(req.Record.Key); ok {
-			st.Put(store.Newer(cur, req.Record))
-		} else {
-			st.Put(req.Record)
-		}
+		st.PutLWW(req.Record)
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(transport.PutResponse{OK: true})
@@ -170,7 +193,7 @@ func main() {
 
 	// Debug helper: ask this node to send an internal PUT to another node.
 	// Example:
-	//   /debug/replica_put?target=http://127.0.0.1:9002&key=cat&value=meow
+	//   /debug/replica_put?target=127.0.0.1:9002&key=cat&value=meow
 	mux.HandleFunc("/debug/replica_put", func(w http.ResponseWriter, r *http.Request) {
 		target := r.URL.Query().Get("target")
 		key := r.URL.Query().Get("key")
@@ -187,9 +210,9 @@ func main() {
 			WriterID: self.ID,
 		}
 
-		// Self shortcut: don't HTTP-call yourself.
-		if strings.Contains(target, self.Addr) {
-			st.Put(rec)
+		// Self shortcut.
+		if strings.TrimPrefix(baseURL(target), "http://") == self.Addr || strings.Contains(baseURL(target), self.Addr) {
+			st.PutLWW(rec)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -198,7 +221,7 @@ func main() {
 		defer cancel()
 
 		var resp transport.PutResponse
-		err := tc.PostJSON(ctx, target+"/internal/put", transport.PutRequest{Record: rec}, &resp)
+		err := tc.PostJSON(ctx, baseURL(target)+"/internal/put", transport.PutRequest{Record: rec}, &resp)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
