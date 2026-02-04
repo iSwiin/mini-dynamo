@@ -152,5 +152,47 @@ curl.exe -i -X DELETE http://127.0.0.1:9001/kv/zombie
 curl.exe -i http://127.0.0.1:9002/kv/zombie
 curl.exe -i http://127.0.0.1:9003/kv/zombie
 ```
+### 3) Anti-entropy convergence (cold keys)
+
+**Goal:** a node catches up without any reads.
+
+1. Stop `n3` (Ctrl+C)
+
+2. Write many keys via `n1`:
+```powershell
+1..50 | % { curl.exe -s -X PUT -d "v$_" "http://127.0.0.1:9001/kv/k$_" | Out-Null }
+```
+
+3. Restart `n3`:
+```powershell
+go run . -id n3 -config nodes.json
+```
+
+4. Do NOT read keys. Watch anti-entropy stats increase on `n3`:
+```powershell
+curl.exe http://127.0.0.1:9003/debug/ae
+```
+
+5. Verify one key exists on `n3`:
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:9003/internal/get" `
+  -ContentType "application/json" `
+  -Body (@{ key = "k17" } | ConvertTo-Json -Compress)
+```
+
+### 4) Durability (restart survives)
+
+**Goal:** a node keeps data after restart (KV WAL replay; snapshot optional).
+
+```powershell
+curl.exe -i -X PUT -d "persist" http://127.0.0.1:9001/kv/p1
+
+# Restart n1 (Ctrl+C in n1 terminal, then run again)
+go run . -id n1 -config nodes.json
+
+curl.exe http://127.0.0.1:9001/kv/p1
+curl.exe http://127.0.0.1:9001/debug/persist
+```
 
 
