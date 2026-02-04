@@ -195,4 +195,28 @@ curl.exe http://127.0.0.1:9001/kv/p1
 curl.exe http://127.0.0.1:9001/debug/persist
 ```
 
+## Persistence notes
+- Each node writes a **KV WAL** on every successful local apply (stores the LWW winner).
+- On restart, the node loads an optional snapshot, then replays the WAL.
+- Snapshots can be enabled with a periodic timer (if supported by your flags/branch).
+
+## Code map (where to look)
+- `internal/ring/` — consistent hashing + vnodes + replica selection  
+- `internal/coordinator/` — quorum logic, sloppy quorum, read-repair  
+- `internal/hints/` — durable hinted handoff queue + delivery loop  
+- `internal/store/` — record type, LWW merge, tombstones, WAL + snapshot  
+- `internal/transport/` — internal request/response types + HTTP client  
+- `main.go` / `cmd/node/` — HTTP server wiring + background loops  
+
+## Tradeoffs / design choices
+- LWW is simple and deterministic but can drop concurrent updates (no vector clocks yet).
+- Anti-entropy uses metadata scanning rather than Merkle trees (simpler, less scalable).
+- Store is in-memory plus WAL (not a full disk-backed engine).
+- Repair loops are bounded to avoid repair storms.
+
+## Roadmap
+- Vector clocks + sibling resolution
+- Merkle trees for scalable anti-entropy
+- Membership / failure detection (gossip)
+- Better compaction and streaming snapshotting
 
