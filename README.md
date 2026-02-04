@@ -22,22 +22,17 @@ Recruiter version: This project demonstrates distributed systems fundamentals (f
 flowchart LR
   Client[Client] -->|PUT/GET/DELETE /kv/<key>| Coord[Coordinator node]
   Coord --> Ring[Consistent hash ring]
-
   Coord -->|POST /internal/put| R1[Replica 1]
   Coord -->|POST /internal/put| R2[Replica 2]
-
   Coord -->|sloppy quorum fallback| FB[Fallback replica]
   FB -->|enqueue hint| HintWAL[Hint WAL]
   HintWAL -->|handoff retry| R1
-
   AE[Anti-entropy loop] -->|POST /internal/keys| R2
   AE -->|pull newer records| Coord
-
   subgraph Node storage
     Mem[MemStore (LWW)] --> KVWAL[KV WAL]
     Mem --> Snap[Snapshot]
   end
   Coord --- Mem
-```
 
 
