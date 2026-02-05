@@ -20,6 +20,50 @@ It implements a Dynamo inspired KV store in Go with configurable N/R/W quorums, 
 - **Durability**: per-node **KV WAL replay** on restart + optional **snapshots**
 - Debug endpoints for visibility: `/debug/hints`, `/debug/ae`, `/debug/persist`
 
+## Quickstart (Docker Compose)
+
+This is the easiest way to run a 3-node cluster locally with per-node durable storage.
+
+```bash
+make up
+make ps
+make smoke
+```
+
+Write + read via any node:
+
+```bash
+curl -X PUT http://localhost:9001/kv/hello -d "world" -v
+curl http://localhost:9002/kv/hello -v
+curl http://localhost:9003/kv/hello -v
+```
+
+Failure demo (hinted handoff + recovery):
+
+```bash
+make kill-n2
+curl -X PUT http://localhost:9001/kv/a -d "1" -v
+make start-n2
+# after a moment, n2 should catch up via hinted handoff / anti-entropy
+curl http://localhost:9002/kv/a -v
+```
+
+Notes:
+- Docker uses `nodes.docker.json` (service-name addressing) and runs each node with:
+  - `--listen` to bind inside the container
+  - `--data_dir=/data` so WAL/snapshots/hints live on a per-node volume
+
+## Local run (no Docker)
+
+Run each node in a separate terminal:
+
+```bash
+go run ./cmd/node --id=n1 --config=nodes.json
+go run ./cmd/node --id=n2 --config=nodes.json
+go run ./cmd/node --id=n3 --config=nodes.json
+```
+
+
 ## Architecture diagram (simple)
 
 ~~~mermaid

@@ -1,0 +1,7 @@
+.git
+data
+**/data
+**/*.wal
+**/*.snap.json
+**/*.log
+**/*.tmp

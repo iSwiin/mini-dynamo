@@ -107,10 +107,12 @@ func main() {
 	var (
 		id      = flag.String("id", "n1", "node id (n1/n2/n3)")
 		cfgp    = flag.String("config", "nodes.json", "path to cluster config")
-		hintwal = flag.String("hintwal", "", "path to hint WAL (default data/hints_<id>.wal)")
+		listen  = flag.String("listen", "", "listen address override (e.g. :9001). if empty, uses config addr")
+		dataDir = flag.String("data_dir", "data", "data directory for WAL/snapshots/hints")
+		hintwal = flag.String("hintwal", "", "path to hint WAL (default <data_dir>/hints_<id>.wal)")
 
-		kvwal  = flag.String("kvwal", "", "path to kv WAL (default data/kv_<id>.wal)")
-		kvsnap = flag.String("kvsnap", "", "path to kv snapshot (default data/kv_<id>.snap.json)")
+		kvwal  = flag.String("kvwal", "", "path to kv WAL (default <data_dir>/kv_<id>.wal)")
+		kvsnap = flag.String("kvsnap", "", "path to kv snapshot (default <data_dir>/kv_<id>.snap.json)")
 		snapI  = flag.Duration("snap_interval", 0, "snapshot interval (0 disables). snapshot blocks writes briefly")
 
 		aeEnable   = flag.Bool("ae", true, "enable anti-entropy background sync")
@@ -155,7 +157,7 @@ func main() {
 		nodesByID[n.ID] = n
 	}
 
-	_ = os.MkdirAll("data", 0o755)
+	_ = os.MkdirAll(*dataDir, 0o755)
 
 	// Ring + transport.
 	rg := ring.New(cfg.Nodes, cfg.VNodes)
@@ -166,11 +168,11 @@ func main() {
 
 	kvWalPath := *kvwal
 	if kvWalPath == "" {
-		kvWalPath = filepath.Join("data", fmt.Sprintf("kv_%s.wal", self.ID))
+		kvWalPath = filepath.Join(*dataDir, fmt.Sprintf("kv_%s.wal", self.ID))
 	}
 	kvSnapPath := *kvsnap
 	if kvSnapPath == "" {
-		kvSnapPath = filepath.Join("data", fmt.Sprintf("kv_%s.snap.json", self.ID))
+		kvSnapPath = filepath.Join(*dataDir, fmt.Sprintf("kv_%s.snap.json", self.ID))
 	}
 
 	if snap, err := store.LoadSnapshot(kvSnapPath); err != nil {
@@ -209,7 +211,7 @@ func main() {
 	// === Step 3: durable hints + handoff loop ===
 	hwal := *hintwal
 	if hwal == "" {
-		hwal = filepath.Join("data", fmt.Sprintf("hints_%s.wal", self.ID))
+		hwal = filepath.Join(*dataDir, fmt.Sprintf("hints_%s.wal", self.ID))
 	}
 	hm, err := hints.NewPersistent(hwal)
 	if err != nil {
@@ -427,8 +429,13 @@ func main() {
 		})
 	})
 
-	log.Printf("node %s listening on %s", self.ID, self.Addr)
-	log.Fatal(http.ListenAndServe(self.Addr, mux))
+	listenAddr := self.Addr
+	if *listen != "" {
+		listenAddr = *listen
+	}
+
+	log.Printf("node %s listening on %s (advertise %s)", self.ID, listenAddr, self.Addr)
+	log.Fatal(http.ListenAndServe(listenAddr, mux))
 }
 
 func runAntiEntropyOnce(tc *transport.Client, st *store.MemStore, peer types.NodeInfo, maxPull int) (compared int, pulled int, err error) {

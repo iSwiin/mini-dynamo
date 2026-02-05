@@ -1,0 +1,8 @@
+# runtime data 
+data/
+*.wal
+
+# misc
+*.log
+*.tmp
+.DS_Store
