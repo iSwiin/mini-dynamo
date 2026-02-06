@@ -1,28 +1,29 @@
 # Mini Dynamo (Go) — Eventually Consistent KV Store
 
-A Dynamo-inspired distributed key-value store built in Go.
-Supports quorum reads/writes, sloppy quorum + hinted handoff, tombstones, anti-entropy, and WAL/snapshot durability.
+A Dynamo inspired distributed key value store built in Go.
+Supports quorum reads/writes, sloppy quorum and hinted handoff, tombstones, anti entropy, and WAL/snapshot durability.
 
 ## Why this project
-I built this Mini Dynamo project to demonstrate distributed systems fundamentals in production style code.
-It implements a Dynamo inspired KV store in Go with configurable N/R/W quorums, sloppy quorum + durable hinted handoff, tombstones, read repair, anti entropy convergence, and WAL/snapshot persistence plus repeatable failure demos you can run locally (kill a node, keep writes working, restart, and verify convergence).
+I built this mini dynamo project to demonstrate distributed systems fundamentals in production style code.
+It implements a Dynamo inspired KV store in Go with configurable N/R/W quorums, sloppy quorum and durable hinted handoff, tombstones, read repair, anti entropy convergence, and WAL/snapshot persistence plus repeatable failure demos you can run locally (e.g kill a node, keep writes working, restart, and verify convergence).
 
 
-## Features
-- **Consistent hashing ring + vnodes** for balanced distribution
-- **Quorum reads/writes (N/R/W)** configurable in `nodes.json`
-- **Sloppy quorum**: accept writes even if a preferred replica is down (by writing to a fallback)
-- **Hinted handoff (durable)**: fallback stores a hint and later delivers to intended replica after recovery
-- **LWW conflict resolution**: Last-Write-Wins (timestamp + writer tie-break)
-- **Tombstones**: deletes replicate safely (no resurrection after failures)
-- **Read-repair**: GET repairs stale replicas opportunistically
-- **Anti-entropy**: background metadata sync converges “cold keys” that are never read
-- **Durability**: per-node **KV WAL replay** on restart + optional **snapshots**
-- Debug endpoints for visibility: `/debug/hints`, `/debug/ae`, `/debug/persist`
+## Extremely cool features
+
+- Consistent hashing ring and vnodes for balanced distribution  
+- Quorum reads and writes with N R W configurable in `nodes.json`  
+- Sloppy quorum that accepts writes when a preferred replica is down by writing to a fallback replica  
+- Durable hinted handoff where the fallback stores a hint and later delivers it to the intended replica after recovery  
+- LWW conflict resolution using last write wins with timestamp plus writer tie break  
+- Tombstones so deletes replicate safely and values do not resurrect after failures  
+- Read repair where GET opportunistically fixes stale replicas  
+- Anti entropy using background metadata sync to converge cold keys that are never read  
+- Durability with per node KV WAL replay on restart plus optional snapshots  
+- Debug endpoints for visibility at `/debug/hints` `/debug/ae` `/debug/persist`  
 
 ## Quickstart (Docker Compose)
 
-This is the easiest way to run a 3-node cluster locally with per-node durable storage.
+This is the easiest way to run a 3 node cluster locally with per node durable storage.
 
 ```bash
 make up
@@ -44,14 +45,9 @@ Failure demo (hinted handoff + recovery):
 make kill-n2
 curl -X PUT http://localhost:9001/kv/a -d "1" -v
 make start-n2
-# after a moment, n2 should catch up via hinted handoff / anti-entropy
+# after a moment, n2 should catch up via hinted handoff / anti entropy
 curl http://localhost:9002/kv/a -v
 ```
-
-Notes:
-- Docker uses `nodes.docker.json` (service-name addressing) and runs each node with:
-  - `--listen` to bind inside the container
-  - `--data_dir=/data` so WAL/snapshots/hints live on a per-node volume
 
 ## Local run (no Docker)
 
@@ -88,7 +84,7 @@ flowchart LR
 
 
 
-## How it works (high level)
+## How it works 
 - A node receiving a client request acts as **Coordinator**.
 - Coordinator uses the **ring** to choose the **preferred replica set** (size **N**).
 - Writes succeed after **W acknowledgements**; reads return after **R responses**.
@@ -156,7 +152,7 @@ Typical setup: **N=3, R=2, W=2** tolerates 1 node down for reads/writes.
 
 ## Demo scenarios (failure tests)
 
-### 1) Sloppy quorum + hinted handoff
+### 1) Sloppy quorum and hinted handoff
 
 **Goal:** a write still succeeds when a preferred replica is down, then the down node catches up after restart.
 
@@ -186,7 +182,7 @@ Invoke-RestMethod -Method Post `
 ```
 ### 2) Tombstone delete (no resurrection)
 
-**Goal:** deletes propagate and stay deleted after failures + repairs.
+**Goal:** deletes propagate and stay deleted after failures and repairs.
 
 ```powershell
 curl.exe -i -X PUT -d "meow" http://127.0.0.1:9001/kv/zombie
@@ -196,7 +192,7 @@ curl.exe -i -X DELETE http://127.0.0.1:9001/kv/zombie
 curl.exe -i http://127.0.0.1:9002/kv/zombie
 curl.exe -i http://127.0.0.1:9003/kv/zombie
 ```
-### 3) Anti-entropy convergence (cold keys)
+### 3) Anti entropy convergence (cold keys)
 
 **Goal:** a node catches up without any reads.
 
@@ -244,7 +240,7 @@ curl.exe http://127.0.0.1:9001/debug/persist
 - On restart, the node loads an optional snapshot, then replays the WAL.
 - Snapshots can be enabled with a periodic timer (if supported by your flags/branch).
 
-## Code map (where to look)
+## Code
 - `internal/ring/` — consistent hashing + vnodes + replica selection  
 - `internal/coordinator/` — quorum logic, sloppy quorum, read-repair  
 - `internal/hints/` — durable hinted handoff queue + delivery loop  
@@ -254,13 +250,13 @@ curl.exe http://127.0.0.1:9001/debug/persist
 
 ## Tradeoffs / design choices
 - LWW is simple and deterministic but can drop concurrent updates (no vector clocks yet).
-- Anti-entropy uses metadata scanning rather than Merkle trees (simpler, less scalable).
-- Store is in-memory plus WAL (not a full disk-backed engine).
+- Anti entropy uses metadata scanning rather than Merkle trees (simpler, less scalable).
+- Store is in memory plus WAL (not a full disk-backed engine).
 - Repair loops are bounded to avoid repair storms.
 
 ## Roadmap
-- Vector clocks + sibling resolution
-- Merkle trees for scalable anti-entropy
+- Vector clocks and sibling resolution
+- Merkle trees for scalable anti entropy
 - Membership / failure detection (gossip)
 - Better compaction and streaming snapshotting
 
